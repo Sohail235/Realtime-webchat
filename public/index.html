@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Clone</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background-color: #f8e9ed; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #fff; height: 100vh; display: flex; flex-direction: column; }
+        .header { background-color: #ff7eb9; color: white; padding: 15px; text-align: center; font-size: 20px; position: relative; }
+        #logoutButton { position: absolute; right: 10px; top: 10px; padding: 5px 10px; background-color: #ff5fa3; border: none; border-radius: 15px; color: white; cursor: pointer; }
+        .auth-container { padding: 20px; display: flex; flex-direction: column; gap: 15px; align-items: center; justify-content: center; height: 100%; }
+        .auth-form { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 300px; }
+        input, textarea { padding: 10px; border: 1px solid #ddd; border-radius: 20px; outline: none; }
+        button { padding: 10px; background-color: #ff7eb9; color: white; border: none; border-radius: 20px; cursor: pointer; }
+        .chat-container { display: none; flex-direction: column; height: 100%; }
+        .messages { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+        .message { max-width: 70%; padding: 10px 15px; border-radius: 18px; display: flex; gap: 8px; }
+        .received { align-self: flex-start; background-color: #f1f1f1; }
+        .sent { align-self: flex-end; background-color: #ff7eb9; color: white; flex-direction: row-reverse; }
+        .profile-pic { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
+        .message-info { font-size: 12px; margin-bottom: 3px; font-weight: bold; }
+        .input-container { padding: 10px; display: flex; gap: 10px; border-top: 1px solid #eee; }
+        #messageInput { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 20px; resize: none; }
+        .user-list { padding: 10px; background-color: #f8e9ed; border-bottom: 1px solid #eee; display: flex; gap: 10px; overflow-x: auto; }
+        .user-bubble { background-color: #ff7eb9; color: white; padding: 5px 10px; border-radius: 15px; cursor: pointer; }
+        .profile-pic-upload { display: none; }
+        .profile-pic-label { width: 80px; height: 80px; border-radius: 50%; background-color: #ff7eb9; display: flex; align-items: center; justify-content: center; color: white; font-size: 30px; cursor: pointer; margin: 0 auto; overflow: hidden; }
+        .profile-pic-label img { width: 100%; height: 100%; object-fit: cover; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            WhatsApp Clone
+            <button id="logoutButton" style="display: none;">Logout</button>
+        </div>
+        
+        <div id="authContainer" class="auth-container">
+            <div id="registerForm" class="auth-form">
+                <h3>Register</h3>
+                <label for="profilePicUpload" class="profile-pic-label">
+                    <span id="profilePicIcon">+</span>
+                    <img id="profilePicPreview" style="display: none;">
+                </label>
+                <input type="file" id="profilePicUpload" class="profile-pic-upload" accept="image/*">
+                <input type="text" id="registerUsername" placeholder="Choose a username">
+                <button id="registerButton">Register</button>
+                <p>Already registered? <a href="#" id="showLogin">Log in</a></p>
+            </div>
+            
+            <div id="loginForm" class="auth-form" style="display: none;">
+                <h3>Login</h3>
+                <input type="text" id="loginUserId" placeholder="Enter your user ID">
+                <button id="loginButton">Log in</button>
+                <p>New user? <a href="#" id="showRegister">Register</a></p>
+            </div>
+        </div>
+        
+        <div id="chatContainer" class="chat-container">
+            <div class="user-list" id="userList"></div>
+            <div class="messages" id="messages"></div>
+            <div class="input-container">
+                <textarea id="messageInput" placeholder="Type a message..."></textarea>
+                <button id="sendButton">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let currentUser = null;
+        let profilePicBase64 = null;
+        
+        // DOM elements
+        const authContainer = document.getElementById('authContainer');
+        const chatContainer = document.getElementById('chatContainer');
+        const registerForm = document.getElementById('registerForm');
+        const loginForm = document.getElementById('loginForm');
+        const registerButton = document.getElementById('registerButton');
+        const loginButton = document.getElementById('loginButton');
+        const showLogin = document.getElementById('showLogin');
+        const showRegister = document.getElementById('showRegister');
+        const registerUsername = document.getElementById('registerUsername');
+        const loginUserId = document.getElementById('loginUserId');
+        const logoutButton = document.getElementById('logoutButton');
+        const messagesContainer = document.getElementById('messages');
+        const messageInput = document.getElementById('messageInput');
+        const sendButton = document.getElementById('sendButton');
+        const userList = document.getElementById('userList');
+        const profilePicUpload = document.getElementById('profilePicUpload');
+        const profilePicPreview = document.getElementById('profilePicPreview');
+        const profilePicIcon = document.getElementById('profilePicIcon');
+
+        // Profile picture handling
+        profilePicUpload.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    profilePicBase64 = event.target.result;
+                    profilePicPreview.src = profilePicBase64;
+                    profilePicPreview.style.display = 'block';
+                    profilePicIcon.style.display = 'none';
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // Check for existing session
+        document.addEventListener('DOMContentLoaded', () => {
+            const savedUser = localStorage.getItem('whatsappUser');
+            if (savedUser) {
+                try {
+                    const user = JSON.parse(savedUser);
+                    loginUser(user.userId);
+                } catch (e) {
+                    localStorage.removeItem('whatsappUser');
+                }
+            }
+        });
+
+        // Register new user
+        registerButton.addEventListener('click', () => {
+            const username = registerUsername.value.trim();
+            if (!username) return;
+            
+            fetch('/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    username,
+                    profilePic: profilePicBase64 
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) throw new Error(data.error);
+                alert(`Registered! Your ID: ${data.userId}`);
+                loginUser(data.userId);
+            })
+            .catch(error => {
+                console.error('Registration error:', error);
+                alert(error.message);
+            });
+        });
+
+        // Login existing user
+        loginButton.addEventListener('click', () => {
+            const userId = loginUserId.value.trim();
+            if (!userId) return;
+            
+            loginUser(userId);
+        });
+
+        // Main login function
+        function loginUser(userId) {
+            fetch('/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) throw new Error(data.error);
+                
+                currentUser = data;
+                localStorage.setItem('whatsappUser', JSON.stringify({
+                    userId: data.id,
+                    username: data.username
+                }));
+                
+                authContainer.style.display = 'none';
+                chatContainer.style.display = 'flex';
+                logoutButton.style.display = 'block';
+                
+                // Load existing messages
+                if (data.messages) {
+                    data.messages.forEach(msg => addMessage(msg));
+                }
+                
+                socket.emit('authenticate', currentUser.id);
+            })
+            .catch(error => {
+                console.error('Login error:', error);
+                localStorage.removeItem('whatsappUser');
+                alert('Session expired. Please login again.');
+            });
+        }
+
+        // Logout function
+        logoutButton.addEventListener('click', () => {
+            localStorage.removeItem('whatsappUser');
+            location.reload();
+        });
+
+        // Socket.io events
+        socket.on('newMessage', (message) => {
+            addMessage(message);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        });
+
+        socket.on('onlineUsers', (users) => {
+            userList.innerHTML = '';
+            users.forEach(user => {
+                if (user.id === currentUser.id) return;
+                const userBubble = document.createElement('div');
+                userBubble.className = 'user-bubble';
+                userBubble.innerHTML = `
+                    ${user.profilePic ? `<img src="${user.profilePic}" style="width:20px;height:20px;border-radius:50%;margin-right:5px;">` : ''}
+                    ${user.username}
+                `;
+                userList.appendChild(userBubble);
+            });
+        });
+
+        // Add message to UI
+        function addMessage(message) {
+            const isCurrentUser = message.fromUserId === currentUser.id;
+            const messageElement = document.createElement('div');
+            messageElement.className = `message ${isCurrentUser ? 'sent' : 'received'}`;
+            
+            messageElement.innerHTML = `
+                <img class="profile-pic" src="${isCurrentUser ? (profilePicBase64 || '') : ''}" onerror="this.style.display='none'">
+                <div>
+                    <div class="message-info">${message.username}</div>
+                    <div>${message.text}</div>
+                </div>
+            `;
+            
+            messagesContainer.appendChild(messageElement);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        // Send message
+        function sendMessage() {
+            const text = messageInput.value.trim();
+            if (!text || !currentUser) return;
+            
+            socket.emit('sendMessage', {
+                fromUserId: currentUser.id,
+                text
+            });
+            
+            messageInput.value = '';
+        }
+
+        sendButton.addEventListener('click', sendMessage);
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+    </script>
+</body>
+  </html>
